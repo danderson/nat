@@ -29,21 +29,128 @@ const magic = 0x2112a442
 // username
 // message-integrity
 
-//const stunServer = "stun.l.google.com:19302"
-//const stunServer = "stun.ekiga.net:3478"
-const stunServer = "stunserver.org:3478"
+type StunError struct {
+	Class  int
+	Number int
+	Reason string
+}
 
-type stunResponse struct {
-	mappedAddr *net.UDPAddr
+type StunResponse struct {
+	MappedAddress      *net.UDPAddr
+	MappedAddressXored bool
+	Username           string
+	Error              StunError
+}
+
+func readMappedAddr(attrValue io.Reader, xored bool, tid []byte) (*net.UDPAddr, os.Error) {
+	var addr struct {
+		Pad    byte
+		Family uint8
+		Port   uint16
+	}
+	if err := binary.Read(attrValue, binary.BigEndian, &addr); err != nil {
+		return nil, err
+	}
+	ipdata, err := ioutil.ReadAll(attrValue)
+	if err != nil {
+		return nil, err
+	}
+	var expectedLen int
+	switch addr.Family {
+	case 1:
+		expectedLen = 4
+	case 2:
+		expectedLen = 16
+	default:
+		return nil, os.NewError("Unknown address family")
+	}
+	if len(ipdata) != expectedLen {
+		return nil, os.NewError("Bad IP length")
+	}
+
+	// If the attribute is a XOR mapped address, we need to decode it
+	// first.
+	if xored {
+		addr.Port ^= 0x2112
+		key := []byte{0x21, 0x12, 0xa4, 0x42}
+		if len(ipdata) == 16 {
+			key = append(key, tid...)
+		}
+		for i := range ipdata {
+			ipdata[i] ^= key[i]
+		}
+	}
+
+	return &net.UDPAddr{net.IP(ipdata).To16(), int(addr.Port)}, nil
+}
+
+func readAttrs(attrs io.Reader, resp *stunResponse, tid []byte) os.Error {
+	for {
+		var attrHeader struct {
+			Type   uint16
+			Length uint16
+		}
+		if err := binary.Read(attrs, binary.BigEndian, &attrHeader); err != nil {
+			if err == os.EOF {
+				break
+			}
+			return err
+		}
+		attrValue := io.LimitReader(attrs, int64(attrHeader.Length))
+		log.Println("Attribute", attrHeader.Type)
+		switch attrHeader.Type {
+		case 0x1:
+			// Some servers send back both XOR and non-XOR mapped
+			// addresses. Skip unXORed ones if we have an address
+			// already.
+			if resp.mappedAddr == nil {
+				maddr, err := readMappedAddr(attrValue, false, nil)
+				if err != nil {
+					return err
+				}
+				resp.mappedAddr = maddr
+			}
+
+		//case 0x8:
+		case 0x20:
+			maddr, err := readMappedAddr(attrValue, true, tid)
+			if err != nil {
+				return err
+			}
+			resp.mappedAddr = maddr
+
+		case 0x8023:
+			maddr, err := readMappedAddr(attrValue, false, nil)
+			if err != nil {
+				return err
+			}
+			log.Println("Alt server:", maddr)
+		default:
+			// Skip past the unknown attribute
+			if _, err := ioutil.ReadAll(attrValue); err != nil {
+				return err
+			}
+		}
+
+		// Realign to 4-byte boundary
+		if padding := (4 - (attrHeader.Length % 4)) % 4; padding != 0 {
+			pad := make([]byte, padding)
+			if _, err := io.ReadFull(attrs, pad); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func readResponse(response []byte, expectedTid []byte) (*stunResponse, os.Error) {
 	buf := bytes.NewBuffer(response)
 	var header struct {
 		ClassAndMethods uint16
-		Length uint16
-		Magic uint32
-		Tid [12]byte
+		Length          uint16
+		Magic           uint32
+		Tid             [12]byte
 	}
 	if err := binary.Read(buf, binary.BigEndian, &header); err != nil {
 		return nil, err
@@ -58,7 +165,7 @@ func readResponse(response []byte, expectedTid []byte) (*stunResponse, os.Error)
 			return nil, os.NewError("STUN server sent unexpected packet")
 		}
 	}
-	if header.Tid != expectedTid {
+	if !bytes.Equal(header.Tid[:], expectedTid) {
 		return nil, os.NewError("Wrong TID in response packet")
 	}
 	if header.Length == 0 {
@@ -67,58 +174,11 @@ func readResponse(response []byte, expectedTid []byte) (*stunResponse, os.Error)
 
 	// Keep track of the number of bytes of response to use when
 	// computing the (potential) MAC, if we encounter a MAC attribute.
-	macLength := sizeof(header)
+	//macLength := 20
 	resp := &stunResponse{}
 
-	attrs = io.LimitReader(buf, header.Length)
-	for {
-		var attrHeader struct {
-			Type uint16
-			Length uint16
-		}
-		if err = binary.Read(attrs, binary.BigEndian, &attrHeader); err != nil {
-			if err == os.EOF {
-				break
-			}
-			return nil, err
-		}
-		attrValue := io.LimitReader(attrs, attrHeader.Length)
-		switch attrHeader.Type {
-		case 0x1:
-			var addr struct {
-				Pad byte
-				Family uint8
-				Port uint16
-			}
-			if err = binary.Read(attrValue, binary.BigEndian, &addr); err != nil {
-				return nil, err
-			}
-			ipdata, err := ioutil.ReadAll(attrValue)
-			if err != nil {
-				return nil, err
-			}
-			var expectedLen int
-			switch addr.Family {
-			case 1:
-				expectedLen = 4
-			case 2:
-				expectedLen = 16
-			default:
-				return nil, os.NewError("Unknown address family")
-			}
-			if len(ipdata) != expectedLen {
-				return nil, os.NewError("Bad IP length")
-			}
-			resp.mappedAddr = &net.UDPAddr{net.IP(ipdata).To16(), addr.Port}
-
-		case 0x8:
-		case 0x20:
-		default:
-			// Skip past the unknown attribute
-			if _, err = ioutil.ReadAll(attrValue); err != nil {
-				return nil, err
-			}
-		}
+	if err := readAttrs(io.LimitReader(buf, int64(header.Length)), resp, expectedTid); err != nil {
+		return nil, err
 	}
 
 	// We're done parsing attributes and apparently had no errors. If
@@ -129,44 +189,17 @@ func readResponse(response []byte, expectedTid []byte) (*stunResponse, os.Error)
 	return resp, nil
 }
 
-func readResponse(packet []byte) (payload []byte, os.Error) {
-	resp := bytes.NewBuffer(packet)
-	var header struct {
-		Class uint16
-		Length uint16
-		Pad [16]byte
-	}
-	if err := binary.Read(resp, binary.BigEndian, &header); err != nil {
-		return nil, nil, err
-	}	
-
-	if header.Class != 0x101 {
-		return nil, nil, os.NewError("Unexpected response")
-	}
-
-	payload := make([]byte, header.Length)
-	var n int
-	if n, err = resp.Read(payload); err != nil {
-		return nil, nil, err
-	}
-	if n != header.Length {
-		return nil, nil, os.NewError("Short read")
-	}
-	return header.Tid, payload, nil
-}
-	
-
-func RunStun(conn *net.UDPConn) (*net.UDPAddr, os.Error) {
-	addr, err := net.ResolveUDPAddr("udp", stunServer)
+func RunStun(conn *net.UDPConn, server string) (*stunResponse, os.Error) {
+	addr, err := net.ResolveUDPAddr("udp", server)
 	if err != nil {
 		return nil, err
 	}
 
 	request := []byte{
-		0, 1,  // Binding request
-		0, 0,  // Message length
-		0x21, 0x12, 0xa4, 0x42,  // magic
-		1,2,3,4,5,6,7,8,9,10,11,12 }  // TID
+		0, 1, // Binding request
+		0, 0, // Message length
+		0x21, 0x12, 0xa4, 0x42, // magic
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12} // TID
 	n, err := conn.WriteToUDP(request, addr)
 	if err != nil {
 		return nil, err
@@ -182,35 +215,12 @@ func RunStun(conn *net.UDPConn) (*net.UDPAddr, os.Error) {
 		return nil, err
 	}
 
-	tid, payload, err := readResponse(buf[:n])
+	resp, err := readResponse(buf[:n], []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
 	if err != nil {
 		return nil, err
 	}
 
-	var attrHeader struct {
-		AttrType uint16
-		Length uint16
-	}
-
-	if err = binary.Read(resp, binary.BigEndian, &attrHeader); err != nil {
-		return nil, err
-	}
-	log.Printf("Attr Header: % #v", attrHeader)
-
-	if attrHeader.AttrType == 1 {
-		var mapped struct {
-			Pad byte
-			Family uint8
-			Port uint16
-		}
-		
-	}
-
-	// log.Println(n)
-	// log.Println(peer)
-	// log.Printf("% x", resp[:n])
-
-	return nil, os.NewError("prout")
+	return resp, nil
 }
 
 func main() {
@@ -222,7 +232,17 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	res, err := RunStun(conn)
-	log.Println(res)
-	log.Println(err)
+
+	servers := []string{
+		// "stun.l.google.com:19302",
+		// "stun.ekiga.net:3478",
+		// "stunserver.org:3478",
+		// "stun.xten.com:3478",
+		"numb.viagenie.ca:3478"}
+
+	for _, server := range servers {
+		log.Println("Running for", server)
+		resp, err := RunStun(conn, server)
+		log.Println(resp, err)
+	}
 }
