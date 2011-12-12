@@ -1,2 +1,7 @@
+syntax: regexp
+
 \.(log|a|8|6|5)$
 ^bin/
+^nat/stun/stunclient/stunclient$
+^src/gonat.googlecode.com/
+^src/test/test$
