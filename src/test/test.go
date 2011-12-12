@@ -15,7 +15,6 @@ func main() {
 	}
 	for _, path := range paths {
 		data, err := ioutil.ReadFile(path)
-		fmt.Printf("%#v\n", data)
 		if err != nil {
 			panic(err)
 		}
