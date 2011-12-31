@@ -29,6 +29,7 @@ const (
 type Packet struct {
 	Class    Class
 	Method   Method
+	Tid      [12]byte
 	Addr     *net.UDPAddr
 	HasMac   bool
 	Software string
@@ -118,6 +119,7 @@ func ParsePacket(raw []byte, macKey []byte) (*Packet, error) {
 	pkt := &Packet{
 		Class:  typeCodeClass(hdr.TypeCode),
 		Method: typeCodeMethod(hdr.TypeCode),
+		Tid:    hdr.Tid,
 	}
 
 	attrReader := bytes.NewBuffer(raw[headerLen:])

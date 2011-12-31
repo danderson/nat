@@ -3,9 +3,9 @@
 package main
 
 import (
+	"code.google.com/p/gonat/nat/stun"
 	"flag"
 	"fmt"
-	"gonat.googlecode.com/hg/nat/stun"
 	"net"
 	"os"
 )

@@ -1,8 +1,8 @@
 package main
 
 import (
+	"code.google.com/p/gonat/nat/stun"
 	"fmt"
-	"gonat.googlecode.com/hg/nat/stun"
 	"io/ioutil"
 	"net"
 	"path/filepath"
