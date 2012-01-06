@@ -9,7 +9,7 @@ if [[ $actual != $expected ]]; then
 fi
 
 ROOT=code.google.com/p/gonat
-TARGETS="$ROOT/nat $ROOT/nat/stun $ROOT/nat/stun/stunclient $ROOT/nat/test"
+TARGETS="$ROOT $ROOT/test"
 
 go fix $TARGETS
 go fmt $TARGETS

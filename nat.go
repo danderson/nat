@@ -4,4 +4,5 @@ import (
 	"net"
 )
 
-func Connect(
+func Connect(sideband net.Conn) {
+}
