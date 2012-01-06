@@ -1,7 +1,7 @@
 package main
 
 import (
-	"code.google.com/p/gonat"
+	"code.google.com/p/nat"
 	"fmt"
 	"net"
 	"os"
@@ -14,5 +14,5 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println(gonat.GatherCandidates(sock))
+	fmt.Println(nat.GatherCandidates(sock))
 }

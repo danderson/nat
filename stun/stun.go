@@ -1,7 +1,7 @@
 // Package stun implements a subset of the Session Traversal Utilities
 // for NAT (STUN) protocol, described in RFC 5389. Notably absent is
 // support for long-term credentials.
-package nat
+package stun
 
 import (
 	"bytes"

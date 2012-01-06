@@ -2,6 +2,7 @@ package nat
 
 import (
 	"bytes"
+	"code.google.com/p/nat/stun"
 	"crypto/rand"
 	"errors"
 	"flag"
@@ -58,7 +59,7 @@ func getReflexive(sock *net.UDPConn) (*net.UDPAddr, error) {
 		return nil, err
 	}
 
-	request, err := BindRequest(tid[:], nil, true)
+	request, err := stun.BindRequest(tid[:], nil, true)
 	if err != nil {
 		return nil, err
 	}
@@ -77,12 +78,12 @@ func getReflexive(sock *net.UDPConn) (*net.UDPAddr, error) {
 		return nil, err
 	}
 
-	packet, err := ParsePacket(buf[:n], nil)
+	packet, err := stun.ParsePacket(buf[:n], nil)
 	if err != nil {
 		return nil, err
 	}
 
-	if packet.Class != ClassSuccess || packet.Method != MethodBinding || packet.Addr == nil || !bytes.Equal(tid[:], packet.Tid[:]) {
+	if packet.Class != stun.ClassSuccess || packet.Method != stun.MethodBinding || packet.Addr == nil || !bytes.Equal(tid[:], packet.Tid[:]) {
 		return nil, errors.New("No address provided by STUN server")
 	}
 

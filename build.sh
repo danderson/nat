@@ -1,14 +1,14 @@
 #!/bin/bash
 
 actual=$(readlink -f $0)
-expected="$GOPATH/src/code.google.com/p/gonat/build.sh"
+expected="$GOPATH/src/code.google.com/p/nat/build.sh"
 
 if [[ $actual != $expected ]]; then
     echo "Not in a dev setup, abort."
     exit 1
 fi
 
-ROOT=code.google.com/p/gonat
+ROOT=code.google.com/p/nat
 TARGETS="$ROOT $ROOT/test"
 
 go fix $TARGETS
