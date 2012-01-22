@@ -36,6 +36,7 @@ type Packet struct {
 	Addr     *net.UDPAddr
 	HasMac   bool
 	Software string
+	UseCandidate bool
 
 	Error     *PacketError
 	Alternate *net.UDPAddr
@@ -54,7 +55,7 @@ func RandomTid() ([]byte, error) {
 //
 // tid must be 12 bytes long. If a macKey is provided, the returned
 // packet is signed.
-func BindRequest(tid []byte, macKey []byte, compat bool) ([]byte, error) {
+func BindRequest(tid []byte, macKey []byte, compat bool, useCandidate bool) ([]byte, error) {
 	if len(tid) != 12 {
 		panic("Wrong length for tid")
 	}
@@ -62,7 +63,15 @@ func BindRequest(tid []byte, macKey []byte, compat bool) ([]byte, error) {
 	hdr.TypeCode = typeCode(ClassRequest, MethodBinding)
 	hdr.Magic = magic
 	copy(hdr.Tid[:], tid)
-	return buildPacket(hdr, []byte{}, macKey, compat)
+
+	var buf bytes.Buffer
+	if useCandidate {
+		binary.Write(&buf, binary.BigEndian, []uint16{
+			attrUseCandidate,
+			uint16(0)})
+	}
+
+	return buildPacket(hdr, buf.Bytes(), macKey, compat)
 }
 
 // BindResponse constructs and returns a Binding Success STUN packet.
@@ -173,6 +182,8 @@ func ParsePacket(raw []byte, macKey []byte) (*Packet, error) {
 			port ^= int(binary.BigEndian.Uint16(raw[4:]))
 			pkt.Addr = &net.UDPAddr{ip, port}
 			haveXor = true
+		case attrUseCandidate:
+			pkt.UseCandidate = true
 
 		case attrFingerprint:
 			return nil, MalformedPacket{}
@@ -417,6 +428,7 @@ const (
 	attrRealm        = 0x14 //
 	attrNonce        = 0x15 //
 	attrXorAddress   = 0x20 //
+	attrUseCandidate = 0x25 //
 
 	// Comprehension optional
 	attrSoftware    = 0x8022 //

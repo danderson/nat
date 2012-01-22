@@ -45,7 +45,7 @@ func getReflexive(sock *net.UDPConn) (*net.UDPAddr, error) {
 		return nil, err
 	}
 
-	request, err := stun.BindRequest(tid[:], nil, true)
+	request, err := stun.BindRequest(tid[:], nil, true, false)
 	if err != nil {
 		return nil, err
 	}

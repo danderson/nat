@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"code.google.com/p/nat/stun"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"net"
 	"time"
 )
 
-func Connect(sideband net.Conn, initiator bool) (*net.UDPConn, error) {
+func Connect(sideband net.Conn, initiator bool) (net.Conn, error) {
 	sock, err := net.ListenUDP("udp", &net.UDPAddr{})
 	if err != nil {
 		return nil, err
@@ -20,12 +21,12 @@ func Connect(sideband net.Conn, initiator bool) (*net.UDPConn, error) {
 		sock:      sock,
 		initiator: initiator}
 
-	err = engine.run()
+	conn, err := engine.run()
 	if err != nil {
 		sock.Close()
 		return nil, err
 	}
-	return sock, nil
+	return conn, nil
 }
 
 type attempt struct {
@@ -33,6 +34,7 @@ type attempt struct {
 	tid       []byte
 	timeout   time.Time
 	success   bool // did we get a STUN response from this addr
+	chosen    bool // Has this channel been picked for the connection?
 	localaddr net.Addr
 }
 
@@ -42,6 +44,7 @@ type attemptEngine struct {
 	initiator bool
 	attempts  []attempt
 	decision  time.Time
+	p2pconn   net.Conn
 }
 
 const probeTimeout = 500 * time.Millisecond
@@ -97,7 +100,7 @@ func (e *attemptEngine) xmit() (time.Time, error) {
 			if err != nil {
 				return time.Time{}, err
 			}
-			packet, err := stun.BindRequest(e.attempts[i].tid, nil, false)
+			packet, err := stun.BindRequest(e.attempts[i].tid, nil, false, e.attempts[i].chosen)
 			if err != nil {
 				return time.Time{}, err
 			}
@@ -142,6 +145,18 @@ func (e *attemptEngine) read() error {
 		if err != nil {
 			return err
 		}
+		if packet.UseCandidate {
+			for i := range e.attempts {
+				if from.String() != e.attempts[i].Addr.String() {
+					continue
+				}
+				if !e.attempts[i].success {
+					return errors.New("Initiator told us to use bad link")
+				}
+				e.p2pconn = &Conn{e.sock, e.attempts[i].localaddr, e.attempts[i].Addr}
+				return nil
+			}
+		}
 
 	case stun.ClassSuccess:
 		for i := range e.attempts {
@@ -149,6 +164,10 @@ func (e *attemptEngine) read() error {
 				continue
 			}
 			if from.String() != e.attempts[i].Addr.String() {
+				return nil
+			}
+			if e.attempts[i].chosen {
+				e.p2pconn = &Conn{e.sock, e.attempts[i].localaddr, e.attempts[i].Addr}
 				return nil
 			}
 			e.attempts[i].success = true
@@ -162,10 +181,17 @@ func (e *attemptEngine) read() error {
 }
 
 func (e *attemptEngine) debug() {
+	if e.initiator {
+		return
+	}
 	buf := new(bytes.Buffer)
 	fmt.Fprintf(buf, "%t\t", e.initiator)
 	for _, att := range e.attempts {
-		fmt.Fprintf(buf, "%s/%s/%s/%t\t", att.Addr, att.localaddr, att.timeout.Sub(time.Now()), att.success)
+		timeout := att.timeout.Sub(time.Now())
+		if timeout < 0 {
+			timeout = 0
+		}
+		fmt.Fprintf(buf, "%s/%s/%s/%t\t", att.Addr, att.localaddr, timeout, att.success)
 	}
 	if e.initiator {
 		buf.WriteString("\n")
@@ -173,29 +199,55 @@ func (e *attemptEngine) debug() {
 	fmt.Println(buf.String())
 }
 
-func (e *attemptEngine) run() error {
+func (e *attemptEngine) run() (net.Conn, error) {
 	if err := e.init(); err != nil {
-		return err
+		return nil, err
 	}
 
 	for {
-		if time.Now().After(e.decision) {
-			fmt.Println("Time to pick!")
-			return nil
+		if e.initiator && !e.decision.IsZero() && time.Now().After(e.decision) {
+			e.decision = time.Time{}
+			if err := e.decide(); err != nil {
+				return nil, err
+			}
 		}
 
 		e.debug()
 
 		timeout, err := e.xmit()
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		e.sock.SetReadDeadline(timeout)
 		if err = e.read(); err != nil {
-			return err
+			return nil, err
+		}
+		if e.p2pconn != nil {
+			return e.p2pconn, nil
 		}
 	}
 
+	panic("unreachable")
+}
+
+func (e *attemptEngine) decide() error {
+	var chosenpos int
+	var chosenprio int64
+	for i := range e.attempts {
+		if e.attempts[i].success && e.attempts[i].Prio > chosenprio {
+			chosenpos = i
+			chosenprio = e.attempts[i].Prio
+		}
+	}
+	if chosenprio == 0 {
+		return errors.New("No feasible connection to peer")
+	}
+
+	// We need one final exchange over the chosen connection, to
+	// indicate to the peer that we've picked this one. That's why we
+	// expire whatever timeout there is here and now.
+	e.attempts[chosenpos].chosen = true
+	e.attempts[chosenpos].timeout = time.Time{}
 	return nil
 }
