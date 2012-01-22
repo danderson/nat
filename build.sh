@@ -13,4 +13,5 @@ TARGETS="$ROOT $ROOT/test"
 
 go fix $TARGETS
 go fmt $TARGETS
-go install -x $TARGETS
+go install -x $ROOT
+go build -o runtest $ROOT/test

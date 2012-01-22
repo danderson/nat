@@ -21,30 +21,16 @@ var lanNets = []*net.IPNet{
 }
 
 type candidate struct {
-	addr *net.UDPAddr
-	prio int64
+	Addr *net.UDPAddr
+	Prio int64
 }
 
 func (c candidate) String() string {
-	return fmt.Sprintf("%#x %v", c.prio, c.addr)
+	return fmt.Sprintf("%#x %v", c.Prio, c.Addr)
 }
 
 func (c candidate) Equal(c2 candidate) bool {
-	return c.addr.IP.Equal(c2.addr.IP) && c.addr.Port == c2.addr.Port
-}
-
-type candidateset []candidate
-
-func (c candidateset) Len() int {
-	return len(c)
-}
-
-func (c candidateset) Less(i, j int) bool {
-	return c[i].prio < c[j].prio
-}
-
-func (c candidateset) Swap(i, j int) {
-	c[i], c[j] = c[j], c[i]
+	return c.Addr.IP.Equal(c2.Addr.IP) && c.Addr.Port == c2.Addr.Port
 }
 
 func getReflexive(sock *net.UDPConn) (*net.UDPAddr, error) {
@@ -111,13 +97,13 @@ func setPriorities(c []candidate) {
 	for i := range c {
 		// Prefer LAN over public net.
 		for _, lan := range lanNets {
-			if lan.Contains(c[i].addr.IP) {
-				c[i].prio |= 1 << 32
+			if lan.Contains(c[i].Addr.IP) {
+				c[i].Prio |= 1 << 32
 			}
 		}
 		// Uniquify each priority. Keep the lower bits clear for
 		// computing pair priorities.
-		c[i].prio += int64(i) << 16
+		c[i].Prio += int64(i) << 16
 	}
 }
 

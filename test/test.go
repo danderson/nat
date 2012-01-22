@@ -4,15 +4,13 @@ import (
 	"code.google.com/p/nat"
 	"fmt"
 	"net"
-	"os"
 )
 
 func main() {
-	sock, err := net.ListenUDP("udp", &net.UDPAddr{})
-	if err != nil {
-		fmt.Println("Couldn't listen on UDP port 4242")
-		os.Exit(1)
-	}
+	a, b := net.Pipe()
 
-	fmt.Println(nat.GatherCandidates(sock))
+	go func() {
+		fmt.Println(nat.Connect(a, false))
+	}()
+	fmt.Println(nat.Connect(b, true))
 }

@@ -6,10 +6,13 @@ package stun
 import (
 	"bytes"
 	"crypto/hmac"
+	"crypto/sha1"
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"net"
 )
 
@@ -36,6 +39,15 @@ type Packet struct {
 
 	Error     *PacketError
 	Alternate *net.UDPAddr
+}
+
+func RandomTid() ([]byte, error) {
+	ret := make([]byte, 12)
+	_, err := io.ReadFull(rand.Reader, ret)
+	if err != nil {
+		return nil, err
+	}
+	return ret, nil
 }
 
 // BindRequest constructs and returns a Binding Request STUN packet.
@@ -170,7 +182,7 @@ func ParsePacket(raw []byte, macKey []byte) (*Packet, error) {
 			}
 			tocheck := raw[:len(raw)-attrReader.Len()-macLen]
 			binary.BigEndian.PutUint16(tocheck[2:4], uint16(len(tocheck)+macLen-headerLen))
-			macer := hmac.NewSHA1(macKey)
+			macer := hmac.New(sha1.New, macKey)
 			if _, err := macer.Write(tocheck); err != nil {
 				return nil, err
 			}
@@ -283,7 +295,7 @@ func buildPacket(hdr header, attributes, macKey []byte, compat bool) ([]byte, er
 	if len(macKey) > 0 {
 		hdr.Length = uint16(len(attributes) + macLen)
 
-		macer := hmac.NewSHA1(macKey)
+		macer := hmac.New(sha1.New, macKey)
 		if err := binary.Write(macer, binary.BigEndian, hdr); err != nil {
 			return nil, err
 		}
