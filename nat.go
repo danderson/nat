@@ -104,10 +104,7 @@ func (e *attemptEngine) xmit() (time.Time, error) {
 			if err != nil {
 				return time.Time{}, err
 			}
-			_, err = e.sock.WriteToUDP(packet, e.attempts[i].Addr)
-			if err != nil {
-				return time.Time{}, err
-			}
+			e.sock.WriteToUDP(packet, e.attempts[i].Addr)
 		}
 		if ret.IsZero() || e.attempts[i].timeout.Before(ret) {
 			ret = e.attempts[i].timeout
@@ -141,10 +138,7 @@ func (e *attemptEngine) read() error {
 		if err != nil {
 			return nil
 		}
-		_, err = e.sock.WriteToUDP(response, from)
-		if err != nil {
-			return err
-		}
+		e.sock.WriteToUDP(response, from)
 		if packet.UseCandidate {
 			for i := range e.attempts {
 				if from.String() != e.attempts[i].Addr.String() {
