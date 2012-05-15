@@ -18,6 +18,12 @@ func newConn(sock *net.UDPConn, local, remote net.Addr) *Conn {
 func (c *Conn) Read(b []byte) (int, error) {
 	for {
 		n, addr, err := c.conn.ReadFrom(b)
+		// Generic non-address related errors.
+		if addr == nil && err != nil {
+			return n, err
+		}
+		// Filter out anything not related to the address we care
+		// about.
 		if addr.Network() != c.remote.Network() || addr.String() != c.remote.String() {
 			continue
 		}
