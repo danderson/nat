@@ -10,6 +10,11 @@ type Conn struct {
 	local, remote net.Addr
 }
 
+func newConn(sock *net.UDPConn, local, remote net.Addr) *Conn {
+	sock.SetDeadline(time.Time{})
+	return &Conn{sock, local, remote}
+}
+
 func (c *Conn) Read(b []byte) (int, error) {
 	for {
 		n, addr, err := c.conn.ReadFrom(b)

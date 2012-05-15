@@ -147,7 +147,7 @@ func (e *attemptEngine) read() error {
 				if !e.attempts[i].success {
 					return errors.New("Initiator told us to use bad link")
 				}
-				e.p2pconn = &Conn{e.sock, e.attempts[i].localaddr, e.attempts[i].Addr}
+				e.p2pconn = newConn(e.sock, e.attempts[i].localaddr, e.attempts[i].Addr)
 				return nil
 			}
 		}
@@ -161,7 +161,7 @@ func (e *attemptEngine) read() error {
 				return nil
 			}
 			if e.attempts[i].chosen {
-				e.p2pconn = &Conn{e.sock, e.attempts[i].localaddr, e.attempts[i].Addr}
+				e.p2pconn = newConn(e.sock, e.attempts[i].localaddr, e.attempts[i].Addr)
 				return nil
 			}
 			e.attempts[i].success = true
