@@ -2,22 +2,24 @@ package nat
 
 import (
 	"bytes"
-	"code.google.com/p/nat/stun"
-	"encoding/gob"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/chripell/nat/stun"
 	"net"
 	"time"
 )
 
-func Connect(sideband net.Conn, initiator bool) (net.Conn, error) {
+type ExchangeCandidatesFun func([]byte) []byte
+
+func Connect(xchg ExchangeCandidatesFun, initiator bool) (net.Conn, error) {
 	sock, err := net.ListenUDP("udp", &net.UDPAddr{})
 	if err != nil {
 		return nil, err
 	}
 
 	engine := &attemptEngine{
-		sideband:  sideband,
+		xchg:      xchg,
 		sock:      sock,
 		initiator: initiator}
 
@@ -39,7 +41,7 @@ type attempt struct {
 }
 
 type attemptEngine struct {
-	sideband  net.Conn
+	xchg      ExchangeCandidatesFun
 	sock      *net.UDPConn
 	initiator bool
 	attempts  []attempt
@@ -57,23 +59,14 @@ func (e *attemptEngine) init() error {
 		return err
 	}
 
-	encoder := gob.NewEncoder(e.sideband)
-	decoder := gob.NewDecoder(e.sideband)
 	var peerCandidates []candidate
-	if e.initiator {
-		if err = encoder.Encode(candidates); err != nil {
-			return err
-		}
-		if err = decoder.Decode(&peerCandidates); err != nil {
-			return err
-		}
-	} else {
-		if err = decoder.Decode(&peerCandidates); err != nil {
-			return err
-		}
-		if err = encoder.Encode(candidates); err != nil {
-			return err
-		}
+	jsonCandidates, err := json.Marshal(candidates)
+	if err != nil {
+		panic(err)
+	}
+	err = json.Unmarshal(e.xchg(jsonCandidates), &peerCandidates)
+	if err != nil {
+		panic(err)
 	}
 
 	e.attempts = make([]attempt, len(peerCandidates))

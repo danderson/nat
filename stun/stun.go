@@ -6,8 +6,8 @@ package stun
 import (
 	"bytes"
 	"crypto/hmac"
-	"crypto/sha1"
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -30,12 +30,12 @@ const (
 
 // A Packet presents select information about a STUN packet.
 type Packet struct {
-	Class    Class
-	Method   Method
-	Tid      [12]byte
-	Addr     *net.UDPAddr
-	HasMac   bool
-	Software string
+	Class        Class
+	Method       Method
+	Tid          [12]byte
+	Addr         *net.UDPAddr
+	HasMac       bool
+	Software     string
 	UseCandidate bool
 
 	Error     *PacketError
@@ -169,7 +169,7 @@ func ParsePacket(raw []byte, macKey []byte) (*Packet, error) {
 				if err != nil {
 					return nil, err
 				}
-				pkt.Addr = &net.UDPAddr{ip, port}
+				pkt.Addr = &net.UDPAddr{ip, port, ""}
 			}
 		case attrXorAddress:
 			ip, port, err := parseAddress(value)
@@ -180,7 +180,7 @@ func ParsePacket(raw []byte, macKey []byte) (*Packet, error) {
 				ip[i] ^= raw[4+i]
 			}
 			port ^= int(binary.BigEndian.Uint16(raw[4:]))
-			pkt.Addr = &net.UDPAddr{ip, port}
+			pkt.Addr = &net.UDPAddr{ip, port, ""}
 			haveXor = true
 		case attrUseCandidate:
 			pkt.UseCandidate = true
@@ -218,7 +218,7 @@ func ParsePacket(raw []byte, macKey []byte) (*Packet, error) {
 			if err != nil {
 				return nil, err
 			}
-			pkt.Alternate = &net.UDPAddr{ip, port}
+			pkt.Alternate = &net.UDPAddr{ip, port, ""}
 
 		case attrUsername:
 		case attrRealm:

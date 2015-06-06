@@ -3,15 +3,16 @@
 package main
 
 import (
-	"code.google.com/p/gonat/nat/stun"
 	"flag"
 	"fmt"
+	"github.com/chripell/nat/stun"
 	"net"
 	"os"
+	"time"
 )
 
-var sourcePort = flag.Int("srcport", 4242, "Source port to use for STUN request")
-var server = flag.String("server", "stunserver.org:3478", "STUN server to query")
+var sourcePort = flag.Int("srcport", 12345, "Source port to use for STUN request")
+var server = flag.String("server", "stun.l.google.com:19302", "STUN server to query")
 
 func main() {
 	flag.Parse()
@@ -22,7 +23,7 @@ func main() {
 	}
 
 	tid := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc}
-	request, err := stun.BindRequest(tid, nil, true)
+	request, err := stun.BindRequest(tid, nil, true, false)
 	if err != nil {
 		fmt.Println("Failed to build STUN request:", err)
 		os.Exit(1)
@@ -33,7 +34,7 @@ func main() {
 		fmt.Println("Couldn't listen on UDP port", *sourcePort)
 		os.Exit(1)
 	}
-	if err := sock.SetTimeout(2e9); err != nil {
+	if err := sock.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		fmt.Println("Couldn't set the socket timeout:", err)
 		os.Exit(1)
 	}

@@ -2,11 +2,11 @@ package nat
 
 import (
 	"bytes"
-	"code.google.com/p/nat/stun"
 	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/chripell/nat/stun"
 	"net"
 )
 
@@ -122,7 +122,7 @@ func GatherCandidates(sock *net.UDPConn) ([]candidate, error) {
 		for _, addr := range addrs {
 			ip, ok := addr.(*net.IPNet)
 			if ok && ip.IP.IsGlobalUnicast() {
-				ret = append(ret, candidate{&net.UDPAddr{ip.IP, laddr.Port}, 0})
+				ret = append(ret, candidate{&net.UDPAddr{ip.IP, laddr.Port, ""}, 0})
 			}
 		}
 	default:
