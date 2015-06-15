@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/chripell/nat/stun"
 	"net"
 	"time"
+
+	"github.com/danderson/nat/stun"
 )
 
 type ExchangeCandidatesFun func([]byte) []byte

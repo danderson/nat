@@ -5,10 +5,11 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/chripell/nat/stun"
 	"net"
 	"os"
 	"time"
+
+	"github.com/danderson/nat/stun"
 )
 
 var sourcePort = flag.Int("srcport", 12345, "Source port to use for STUN request")

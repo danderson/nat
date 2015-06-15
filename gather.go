@@ -6,8 +6,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/chripell/nat/stun"
 	"net"
+
+	"github.com/danderson/nat/stun"
 )
 
 var stunserver = flag.String("stunserver", "stun.l.google.com:19302",
