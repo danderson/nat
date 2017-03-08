@@ -50,9 +50,12 @@ type attemptEngine struct {
 	p2pconn   net.Conn
 }
 
-const probeTimeout = 500 * time.Millisecond
-const probeInterval = 100 * time.Millisecond
-const decisionTime = 2 * time.Second
+const (
+	probeTimeout  = 500 * time.Millisecond
+	probeInterval = 100 * time.Millisecond
+	decisionTime  = 2 * time.Second
+	peerDeadline  = 5 * time.Second
+)
 
 func (e *attemptEngine) init() error {
 	candidates, err := GatherCandidates(e.sock)
@@ -192,6 +195,7 @@ func (e *attemptEngine) run() (net.Conn, error) {
 		return nil, err
 	}
 
+	endTime := time.Now().Add(peerDeadline)
 	for {
 		if e.initiator && !e.decision.IsZero() && time.Now().After(e.decision) {
 			e.decision = time.Time{}
@@ -207,12 +211,21 @@ func (e *attemptEngine) run() (net.Conn, error) {
 			return nil, err
 		}
 
+		if time.Now().After(timeout) {
+			timeout = time.Now().Add(peerDeadline)
+		}
+
 		e.sock.SetReadDeadline(timeout)
 		if err = e.read(); err != nil {
 			return nil, err
 		}
+
 		if e.p2pconn != nil {
 			return e.p2pconn, nil
+		}
+
+		if time.Now().After(endTime) {
+			return nil, fmt.Errorf("haven't heard from my peer after %v", peerDeadline)
 		}
 	}
 
