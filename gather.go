@@ -7,9 +7,12 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/danderson/nat/stun"
 )
+
+const stunTimeout = 5 * time.Second
 
 var stunserver = flag.String("stunserver", "stun.l.google.com:19302",
 	"STUN server to query for reflexive address")
@@ -35,6 +38,9 @@ func (c candidate) Equal(c2 candidate) bool {
 }
 
 func getReflexive(sock *net.UDPConn) (*net.UDPAddr, error) {
+	sock.SetDeadline(time.Now().Add(stunTimeout))
+	defer sock.SetDeadline(time.Time{})
+
 	serverAddr, err := net.ResolveUDPAddr("udp", *stunserver)
 	if err != nil {
 
