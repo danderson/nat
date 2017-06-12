@@ -9,7 +9,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/chripell/nat/stun"
+	"github.com/danderson/nat/stun"
 )
 
 const stunTimeout = 5 * time.Second

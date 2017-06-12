@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chripell/nat"
+	"github.com/danderson/nat"
 )
 
 var (

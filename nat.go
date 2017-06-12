@@ -9,7 +9,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/chripell/nat/stun"
+	"github.com/danderson/nat/stun"
 )
 
 type ExchangeCandidatesFun func([]byte) []byte
