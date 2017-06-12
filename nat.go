@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"time"
 
@@ -13,7 +14,24 @@ import (
 
 type ExchangeCandidatesFun func([]byte) []byte
 
-func Connect(xchg ExchangeCandidatesFun, initiator bool) (net.Conn, error) {
+type Config struct {
+	ProbeTimeout  time.Duration
+	ProbeInterval time.Duration
+	DecisionTime  time.Duration
+	PeerDeadline  time.Duration
+	Verbose       bool
+}
+
+func DefaultConfig() *Config {
+	return &Config{
+		ProbeTimeout:  500 * time.Millisecond,
+		ProbeInterval: 100 * time.Millisecond,
+		DecisionTime:  2 * time.Second,
+		PeerDeadline:  5 * time.Second,
+	}
+}
+
+func ConnectOpt(xchg ExchangeCandidatesFun, initiator bool, cfg *Config) (net.Conn, error) {
 	sock, err := net.ListenUDP("udp", &net.UDPAddr{})
 	if err != nil {
 		return nil, err
@@ -22,7 +40,9 @@ func Connect(xchg ExchangeCandidatesFun, initiator bool) (net.Conn, error) {
 	engine := &attemptEngine{
 		xchg:      xchg,
 		sock:      sock,
-		initiator: initiator}
+		initiator: initiator,
+		cfg:       cfg,
+	}
 
 	conn, err := engine.run()
 	if err != nil {
@@ -30,6 +50,10 @@ func Connect(xchg ExchangeCandidatesFun, initiator bool) (net.Conn, error) {
 		return nil, err
 	}
 	return conn, nil
+}
+
+func Connect(xchg ExchangeCandidatesFun, initiator bool) (net.Conn, error) {
+	return ConnectOpt(xchg, initiator, DefaultConfig())
 }
 
 type attempt struct {
@@ -48,14 +72,8 @@ type attemptEngine struct {
 	attempts  []attempt
 	decision  time.Time
 	p2pconn   net.Conn
+	cfg       *Config
 }
-
-const (
-	probeTimeout  = 500 * time.Millisecond
-	probeInterval = 100 * time.Millisecond
-	decisionTime  = 2 * time.Second
-	peerDeadline  = 5 * time.Second
-)
 
 func (e *attemptEngine) init() error {
 	candidates, err := GatherCandidates(e.sock)
@@ -80,7 +98,7 @@ func (e *attemptEngine) init() error {
 	}
 
 	e.sock.SetWriteDeadline(time.Time{})
-	e.decision = time.Now().Add(decisionTime)
+	e.decision = time.Now().Add(e.cfg.DecisionTime)
 
 	return nil
 }
@@ -92,7 +110,7 @@ func (e *attemptEngine) xmit() (time.Time, error) {
 
 	for i := range e.attempts {
 		if e.attempts[i].timeout.Before(now) {
-			e.attempts[i].timeout = time.Now().Add(probeTimeout)
+			e.attempts[i].timeout = time.Now().Add(e.cfg.ProbeTimeout)
 			e.attempts[i].tid, err = stun.RandomTid()
 			if err != nil {
 				return time.Time{}, err
@@ -100,6 +118,9 @@ func (e *attemptEngine) xmit() (time.Time, error) {
 			packet, err := stun.BindRequest(e.attempts[i].tid, nil, false, e.attempts[i].chosen)
 			if err != nil {
 				return time.Time{}, err
+			}
+			if e.cfg.Verbose {
+				log.Printf("TX probe %v to %v", e.attempts[i].tid, e.attempts[i].Addr)
 			}
 			e.sock.WriteToUDP(packet, e.attempts[i].Addr)
 		}
@@ -122,10 +143,16 @@ func (e *attemptEngine) read() error {
 
 	packet, err := stun.ParsePacket(buf[:n], nil)
 	if err != nil {
+		if e.cfg.Verbose {
+			log.Printf("Cannot parse packet from %v: %v", from, err)
+		}
 		return nil
 	}
 
 	if packet.Method != stun.MethodBinding {
+		if e.cfg.Verbose {
+			log.Printf("Packet from %v is not a binding request", from)
+		}
 		return nil
 	}
 
@@ -133,9 +160,15 @@ func (e *attemptEngine) read() error {
 	case stun.ClassRequest:
 		response, err := stun.BindResponse(packet.Tid[:], from, nil, false)
 		if err != nil {
+			if e.cfg.Verbose {
+				log.Printf("Cannot bind response: %v", err)
+			}
 			return nil
 		}
 		e.sock.WriteToUDP(response, from)
+		if e.cfg.Verbose {
+			log.Printf("RX %v from %v use candidate %v, answering", packet.Tid[:], from, packet.UseCandidate)
+		}
 		if packet.UseCandidate {
 			for i := range e.attempts {
 				if from.String() != e.attempts[i].Addr.String() {
@@ -144,12 +177,18 @@ func (e *attemptEngine) read() error {
 				if !e.attempts[i].success {
 					return errors.New("Initiator told us to use bad link")
 				}
+				if e.cfg.Verbose {
+					log.Printf("Choose local %v remote %v", e.attempts[i].localaddr, e.attempts[i].Addr)
+				}
 				e.p2pconn = newConn(e.sock, e.attempts[i].localaddr, e.attempts[i].Addr)
 				return nil
 			}
 		}
 
 	case stun.ClassSuccess:
+		if e.cfg.Verbose {
+			log.Printf("RX %v from %v", packet.Tid[:], from)
+		}
 		for i := range e.attempts {
 			if !bytes.Equal(packet.Tid[:], e.attempts[i].tid) {
 				continue
@@ -158,12 +197,15 @@ func (e *attemptEngine) read() error {
 				return nil
 			}
 			if e.attempts[i].chosen {
+				if e.cfg.Verbose {
+					log.Printf("Choose local %v remote %v", e.attempts[i].localaddr, e.attempts[i].Addr)
+				}
 				e.p2pconn = newConn(e.sock, e.attempts[i].localaddr, e.attempts[i].Addr)
 				return nil
 			}
 			e.attempts[i].success = true
 			e.attempts[i].localaddr = packet.Addr
-			e.attempts[i].timeout = time.Now().Add(probeInterval)
+			e.attempts[i].timeout = time.Now().Add(e.cfg.ProbeInterval)
 			return nil
 		}
 	}
@@ -171,31 +213,12 @@ func (e *attemptEngine) read() error {
 	return nil
 }
 
-func (e *attemptEngine) debug() {
-	if e.initiator {
-		return
-	}
-	buf := new(bytes.Buffer)
-	fmt.Fprintf(buf, "%t\t", e.initiator)
-	for _, att := range e.attempts {
-		timeout := att.timeout.Sub(time.Now())
-		if timeout < 0 {
-			timeout = 0
-		}
-		fmt.Fprintf(buf, "%s/%s/%s/%t\t", att.Addr, att.localaddr, timeout, att.success)
-	}
-	if e.initiator {
-		buf.WriteString("\n")
-	}
-	fmt.Println(buf.String())
-}
-
 func (e *attemptEngine) run() (net.Conn, error) {
 	if err := e.init(); err != nil {
 		return nil, err
 	}
 
-	endTime := time.Now().Add(peerDeadline)
+	endTime := time.Now().Add(e.cfg.PeerDeadline)
 	for {
 		if e.initiator && !e.decision.IsZero() && time.Now().After(e.decision) {
 			e.decision = time.Time{}
@@ -204,15 +227,13 @@ func (e *attemptEngine) run() (net.Conn, error) {
 			}
 		}
 
-		e.debug()
-
 		timeout, err := e.xmit()
 		if err != nil {
 			return nil, err
 		}
 
 		if time.Now().After(timeout) {
-			timeout = time.Now().Add(peerDeadline)
+			timeout = time.Now().Add(e.cfg.PeerDeadline)
 		}
 
 		e.sock.SetReadDeadline(timeout)
@@ -225,7 +246,7 @@ func (e *attemptEngine) run() (net.Conn, error) {
 		}
 
 		if time.Now().After(endTime) {
-			return nil, fmt.Errorf("haven't heard from my peer after %v", peerDeadline)
+			return nil, fmt.Errorf("haven't heard from my peer after %v", e.cfg.PeerDeadline)
 		}
 	}
 
