@@ -114,16 +114,48 @@ func setPriorities(c []candidate) {
 	}
 }
 
-func GatherCandidates(sock *net.UDPConn) ([]candidate, error) {
+func pruneCandidates(cands []candidate, blacklist []*net.IPNet) []candidate {
+	ret := []candidate{}
+skipCandidate:
+	for _, c := range cands {
+		for _, avoid := range blacklist {
+			if avoid.Contains(c.Addr.IP) {
+				continue skipCandidate
+			}
+		}
+		ret = append(ret, c)
+	}
+	return ret
+}
+
+func GatherCandidates(sock *net.UDPConn, ifaces []string, blacklist []*net.IPNet) ([]candidate, error) {
 	laddr := sock.LocalAddr().(*net.UDPAddr)
 	ret := []candidate{}
 	switch {
 	case laddr.IP.IsLoopback():
 		return nil, errors.New("Connecting over loopback not supported")
 	case laddr.IP.IsUnspecified():
-		addrs, err := net.InterfaceAddrs()
-		if err != nil {
-			return nil, err
+		var (
+			addrs []net.Addr
+			err   error
+		)
+		if len(ifaces) == 0 {
+			addrs, err = net.InterfaceAddrs()
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			for _, iface := range ifaces {
+				ifi, err := net.InterfaceByName(iface)
+				if err != nil {
+					return nil, err
+				}
+				iAddrs, err := ifi.Addrs()
+				if err != nil {
+					return nil, err
+				}
+				addrs = append(addrs, iAddrs...)
+			}
 		}
 
 		for _, addr := range addrs {
@@ -143,5 +175,5 @@ func GatherCandidates(sock *net.UDPConn) ([]candidate, error) {
 	}
 
 	setPriorities(ret)
-	return ret, nil
+	return pruneCandidates(ret, blacklist), nil
 }
