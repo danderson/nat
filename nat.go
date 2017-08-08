@@ -15,11 +15,14 @@ import (
 type ExchangeCandidatesFun func([]byte) []byte
 
 type Config struct {
-	ProbeTimeout  time.Duration
-	ProbeInterval time.Duration
-	DecisionTime  time.Duration
-	PeerDeadline  time.Duration
-	Verbose       bool
+	ProbeTimeout       time.Duration
+	ProbeInterval      time.Duration
+	DecisionTime       time.Duration
+	PeerDeadline       time.Duration
+	Verbose            bool
+	BindAddress        *net.UDPAddr
+	UseInterfaces      []string
+	BlacklistAddresses []*net.IPNet
 }
 
 func DefaultConfig() *Config {
@@ -28,11 +31,12 @@ func DefaultConfig() *Config {
 		ProbeInterval: 100 * time.Millisecond,
 		DecisionTime:  2 * time.Second,
 		PeerDeadline:  5 * time.Second,
+		BindAddress:   &net.UDPAddr{},
 	}
 }
 
 func ConnectOpt(xchg ExchangeCandidatesFun, initiator bool, cfg *Config) (net.Conn, error) {
-	sock, err := net.ListenUDP("udp", &net.UDPAddr{})
+	sock, err := net.ListenUDP("udp", cfg.BindAddress)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +80,7 @@ type attemptEngine struct {
 }
 
 func (e *attemptEngine) init() error {
-	candidates, err := GatherCandidates(e.sock)
+	candidates, err := GatherCandidates(e.sock, e.cfg.UseInterfaces, e.cfg.BlacklistAddresses)
 	if err != nil {
 		return err
 	}
@@ -189,6 +193,7 @@ func (e *attemptEngine) read() error {
 		if e.cfg.Verbose {
 			log.Printf("RX %v from %v", packet.Tid[:], from)
 		}
+	skipAddress:
 		for i := range e.attempts {
 			if !bytes.Equal(packet.Tid[:], e.attempts[i].tid) {
 				continue
@@ -202,6 +207,11 @@ func (e *attemptEngine) read() error {
 				}
 				e.p2pconn = newConn(e.sock, e.attempts[i].localaddr, e.attempts[i].Addr)
 				return nil
+			}
+			for _, avoid := range e.cfg.BlacklistAddresses {
+				if avoid.Contains(packet.Addr.IP) {
+					continue skipAddress
+				}
 			}
 			e.attempts[i].success = true
 			e.attempts[i].localaddr = packet.Addr

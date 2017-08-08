@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -25,6 +26,11 @@ var (
 	testString = flag.String("test_string",
 		"The quick UDP packet jumped over the lazy TCP stream",
 		"String to test echo on")
+	bindAddress   = flag.String("bind_address", "", "Bind to a local IP address")
+	useInterfaces = flag.String("use_interfaces", "", "Comma separated list of interfaces to use. "+
+		"If not defined use all the suitable ones")
+	blacklistAddresses = flag.String("blacklist_addresses", "", "Comma separated list of IP ranges "+
+		"(in CIDR format) to avoid using as possible candidates")
 	cmd *exec.Cmd
 )
 
@@ -66,11 +72,41 @@ func xchangeCandidates(mine []byte) []byte {
 	return nil
 }
 
+func listize(str string) []string {
+	var ret []string
+	for _, s := range strings.Split(str, ",") {
+		ret = append(ret, strings.TrimSpace(s))
+	}
+	return ret
+}
+
 func main() {
 	log.SetOutput(os.Stdout)
 	flag.Parse()
 	cfg := nat.DefaultConfig()
 	cfg.Verbose = true
+	if *bindAddress != "" {
+		addr, err := net.ResolveUDPAddr("udp", *bindAddress)
+		if err != nil {
+			log.Fatalf("Cannot resolve %q as an UDP address: %v", *bindAddress, err)
+		}
+		cfg.BindAddress = addr
+	}
+	if *useInterfaces != "" {
+		cfg.UseInterfaces = listize(*useInterfaces)
+	}
+	if *blacklistAddresses != "" {
+		stringAddrs := listize(*blacklistAddresses)
+		var addrs []*net.IPNet
+		for _, a := range stringAddrs {
+			_, ipNet, err := net.ParseCIDR(a)
+			if err != nil {
+				log.Fatalf("Malformed addess %q : %v", a, err)
+			}
+			addrs = append(addrs, ipNet)
+		}
+		cfg.BlacklistAddresses = addrs
+	}
 	conn, err := nat.ConnectOpt(xchangeCandidates, *initiator != "", cfg)
 	if err != nil {
 		log.Fatalf("NO CARRIER: %v\n", err)
