@@ -15,23 +15,35 @@ import (
 type ExchangeCandidatesFun func([]byte) []byte
 
 type Config struct {
-	ProbeTimeout       time.Duration
-	ProbeInterval      time.Duration
-	DecisionTime       time.Duration
-	PeerDeadline       time.Duration
-	Verbose            bool
-	BindAddress        *net.UDPAddr
-	UseInterfaces      []string
+	// ProbeTimeout is the duration between sending probes.
+	ProbeTimeout time.Duration
+	// DecisionTime is how much time we wait before checking (on the
+	// initiator) all the links that successfully communicated (so they got
+	// stun.ClassSuccess in response to a stun.ClassRequest) and deciding
+	// which one to use.
+	DecisionTime time.Duration
+	// PeerDeadline is the duration for which the negotiation must go
+	// on. Please note this must be > DecisionTime because after the
+	// initiator decided which link to use, we need to have one more
+	// complete round-trip (stun.ClassSuccess in response to a
+	// stun.ClassRequest) but with UseCandidate set to true.
+	PeerDeadline time.Duration
+	// Prints all the ongoing handshakes.
+	Verbose bool
+	// Bind locally to a specific address.
+	BindAddress *net.UDPAddr
+	// Which interfaces use for ICE.
+	UseInterfaces []string
+	// Blacklist given addresses for ICE negotiation.
 	BlacklistAddresses []*net.IPNet
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		ProbeTimeout:  500 * time.Millisecond,
-		ProbeInterval: 100 * time.Millisecond,
-		DecisionTime:  2 * time.Second,
-		PeerDeadline:  5 * time.Second,
-		BindAddress:   &net.UDPAddr{},
+		ProbeTimeout: 500 * time.Millisecond,
+		DecisionTime: 4 * time.Second,
+		PeerDeadline: 6 * time.Second,
+		BindAddress:  &net.UDPAddr{},
 	}
 }
 
@@ -74,7 +86,6 @@ type attemptEngine struct {
 	sock      *net.UDPConn
 	initiator bool
 	attempts  []attempt
-	decision  time.Time
 	p2pconn   net.Conn
 	cfg       *Config
 }
@@ -102,7 +113,6 @@ func (e *attemptEngine) init() error {
 	}
 
 	e.sock.SetWriteDeadline(time.Time{})
-	e.decision = time.Now().Add(e.cfg.DecisionTime)
 
 	return nil
 }
@@ -179,12 +189,18 @@ func (e *attemptEngine) read() error {
 					continue
 				}
 				if !e.attempts[i].success {
-					return errors.New("Initiator told us to use bad link")
+					m := fmt.Errorf("bad link: local %v remote %v", e.attempts[i].localaddr, e.attempts[i].Addr)
+					if e.cfg.Verbose {
+						log.Printf("Error: %v", m)
+					}
+					return m
 				}
-				if e.cfg.Verbose {
-					log.Printf("Choose local %v remote %v", e.attempts[i].localaddr, e.attempts[i].Addr)
+				if e.p2pconn == nil {
+					if e.cfg.Verbose {
+						log.Printf("Confirmed local %v remote %v", e.attempts[i].localaddr, e.attempts[i].Addr)
+					}
+					e.p2pconn = newConn(e.sock, e.attempts[i].localaddr, e.attempts[i].Addr)
 				}
-				e.p2pconn = newConn(e.sock, e.attempts[i].localaddr, e.attempts[i].Addr)
 				return nil
 			}
 		}
@@ -202,11 +218,13 @@ func (e *attemptEngine) read() error {
 				return nil
 			}
 			if e.attempts[i].chosen {
-				if e.cfg.Verbose {
-					log.Printf("Choose local %v remote %v", e.attempts[i].localaddr, e.attempts[i].Addr)
+				if e.p2pconn == nil {
+					if e.cfg.Verbose {
+						log.Printf("Confirmed local %v remote %v", e.attempts[i].localaddr, e.attempts[i].Addr)
+					}
+					e.p2pconn = newConn(e.sock, e.attempts[i].localaddr, e.attempts[i].Addr)
+					return nil
 				}
-				e.p2pconn = newConn(e.sock, e.attempts[i].localaddr, e.attempts[i].Addr)
-				return nil
 			}
 			for _, avoid := range e.cfg.BlacklistAddresses {
 				if avoid.Contains(packet.Addr.IP) {
@@ -215,7 +233,6 @@ func (e *attemptEngine) read() error {
 			}
 			e.attempts[i].success = true
 			e.attempts[i].localaddr = packet.Addr
-			e.attempts[i].timeout = time.Now().Add(e.cfg.ProbeInterval)
 			return nil
 		}
 	}
@@ -229,38 +246,57 @@ func (e *attemptEngine) run() (net.Conn, error) {
 	}
 
 	endTime := time.Now().Add(e.cfg.PeerDeadline)
-	for {
-		if e.initiator && !e.decision.IsZero() && time.Now().After(e.decision) {
-			e.decision = time.Time{}
+	decision := time.Now().Add(e.cfg.DecisionTime)
+
+	for time.Now().Before(endTime) {
+		if e.initiator && !decision.IsZero() && time.Now().After(decision) {
+			decision = time.Time{}
 			if err := e.decide(); err != nil {
+				if e.cfg.Verbose {
+					log.Printf("Decision failed: %v", err)
+				}
 				return nil, err
 			}
 		}
 
 		timeout, err := e.xmit()
 		if err != nil {
+			if e.cfg.Verbose {
+				log.Printf("TX failed: %v", err)
+			}
 			return nil, err
-		}
-
-		if time.Now().After(timeout) {
-			timeout = time.Now().Add(e.cfg.PeerDeadline)
 		}
 
 		e.sock.SetReadDeadline(timeout)
 		if err = e.read(); err != nil {
+			if e.cfg.Verbose {
+				log.Printf("RX failed: %v", err)
+			}
 			return nil, err
 		}
 
-		if e.p2pconn != nil {
-			return e.p2pconn, nil
-		}
-
-		if time.Now().After(endTime) {
-			return nil, fmt.Errorf("haven't heard from my peer after %v", e.cfg.PeerDeadline)
-		}
 	}
 
-	panic("unreachable")
+	if e.p2pconn != nil {
+		if e.cfg.Verbose {
+			log.Print("Success!")
+		}
+		return e.p2pconn, nil
+	}
+	for i := range e.attempts {
+		if e.attempts[i].chosen {
+			m := fmt.Errorf("last round with UseCandidate true failed even if a candidate circuit has been established.")
+			if e.cfg.Verbose {
+				log.Printf("Fail: %v", m)
+			}
+			return nil, m
+		}
+	}
+	m := fmt.Errorf("no circuit could be established after %v", e.cfg.PeerDeadline)
+	if e.cfg.Verbose {
+		log.Printf("Fail: %v", m)
+	}
+	return nil, m
 }
 
 func (e *attemptEngine) decide() error {
@@ -279,6 +315,9 @@ func (e *attemptEngine) decide() error {
 	// We need one final exchange over the chosen connection, to
 	// indicate to the peer that we've picked this one. That's why we
 	// expire whatever timeout there is here and now.
+	if e.cfg.Verbose {
+		log.Printf("Choosen: local %v remote %v", e.attempts[chosenpos].localaddr, e.attempts[chosenpos].Addr)
+	}
 	e.attempts[chosenpos].chosen = true
 	e.attempts[chosenpos].timeout = time.Time{}
 	return nil
