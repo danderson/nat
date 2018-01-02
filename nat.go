@@ -36,6 +36,9 @@ type Config struct {
 	UseInterfaces []string
 	// Blacklist given addresses for ICE negotiation.
 	BlacklistAddresses []*net.IPNet
+	// TOS, if >0, sets IP_TOS to this value. Note an error is consider
+	// non-fatal, if is just logged.
+	TOS int
 }
 
 func DefaultConfig() *Config {
@@ -44,6 +47,7 @@ func DefaultConfig() *Config {
 		DecisionTime: 4 * time.Second,
 		PeerDeadline: 6 * time.Second,
 		BindAddress:  &net.UDPAddr{},
+		TOS:          -1,
 	}
 }
 
@@ -51,6 +55,9 @@ func ConnectOpt(xchg ExchangeCandidatesFun, initiator bool, cfg *Config) (net.Co
 	sock, err := net.ListenUDP("udp", cfg.BindAddress)
 	if err != nil {
 		return nil, err
+	}
+	if err := setTOS(sock, cfg.TOS); err != nil {
+		log.Printf("Failed to set TOS to %d: %v", cfg.TOS, err)
 	}
 
 	engine := &attemptEngine{
