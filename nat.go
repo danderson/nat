@@ -36,8 +36,8 @@ type Config struct {
 	UseInterfaces []string
 	// Blacklist given addresses for ICE negotiation.
 	BlacklistAddresses []*net.IPNet
-	// TOS, if >0, sets IP_TOS to this value. Note an error is consider
-	// non-fatal, if is just logged.
+	// TOS, if >0, sets IP_TOS to this value. Note an error is considered
+	// non-fatal, it is just logged.
 	TOS int
 }
 
