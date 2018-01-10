@@ -21,6 +21,7 @@ func setTOS(conn net.Conn, tos int) error {
 	if err != nil {
 		return fmt.Errorf("Failed to set TOS, connection retrieve the fd: %v", err)
 	}
+	defer f.Close()
 	if err := syscall.SetsockoptInt(syscall.Handle(f.Fd()), syscall.SOL_SOCKET, syscall.IP_TOS, tos); err != nil {
 		return fmt.Errorf("Failed to set TOS to %d: %v", tos, err)
 	}
